@@ -1,0 +1,238 @@
+<html>
+<head>
+<script id="vertex" type="x-shader">
+    attribute vec2 aVertexPosition;
+    void main() {
+        gl_Position = vec4(aVertexPosition, 0.0, 1.0);
+    }
+</script>
+<script id="fragment" type="x-shader">
+    #ifdef GL_ES
+        precision highp float;
+    #endif
+
+    uniform vec4 uColor;
+
+    void main() {
+        gl_FragColor = uColor;
+    }
+</script>
+<script type="text/javascript">
+
+let width = 800;
+let height = 600;
+
+var wasChange = false;
+
+function xToGl(x) {
+    return 2.0*x/width - 1.0;
+}
+function yToGl(y) {
+    return 1.0 - 2.0*y/height;
+}
+
+function ballsToCoords(balls) {
+    var vertices = new Float32Array(balls.size*12);
+    var ballInd = 0;
+    balls.forEach((ball,k) => {
+        vertices[ballInd*12] = xToGl(ball.x-5.0);
+        vertices[ballInd*12+1] = yToGl(ball.y-5.0); 
+        vertices[ballInd*12+2] = xToGl(ball.x+5.0);
+        vertices[ballInd*12+3] = yToGl(ball.y-5.0);
+        vertices[ballInd*12+4] = xToGl(ball.x+5.0);
+        vertices[ballInd*12+5] = yToGl(ball.y+5.0); // triangle 1
+        vertices[ballInd*12+6] = xToGl(ball.x-5.0);
+        vertices[ballInd*12+7] = yToGl(ball.y-5.0);
+        vertices[ballInd*12+8] = xToGl(ball.x-5.0);
+        vertices[ballInd*12+9] = yToGl(ball.y+5.0);
+        vertices[ballInd*12+10] = xToGl(ball.x+5.0);
+        vertices[ballInd*12+11] = yToGl(ball.y+5.0); // triangle 2
+        ballInd++;
+    });
+    return vertices;
+}
+
+let gl = null;
+let textCtx = null;
+
+function init(){
+
+    var textcanvas = document.getElementById("textcanvas");
+    textCtx = textcanvas.getContext("2d");    
+
+    canvas = document.getElementById("mycanvas");
+    gl = canvas.getContext("webgl");
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0, 0.5, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+        
+    var v = document.getElementById("vertex").firstChild.nodeValue;
+    var f = document.getElementById("fragment").firstChild.nodeValue;
+
+    var vs = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vs, v);
+    gl.compileShader(vs);
+
+    var fs = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fs, f);
+    gl.compileShader(fs);
+
+    program = gl.createProgram();
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
+    gl.linkProgram(program);
+
+    if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS))
+        console.log(gl.getShaderInfoLog(vs));
+
+    if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS))
+        console.log(gl.getShaderInfoLog(fs));
+
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS))
+        console.log(gl.getProgramInfoLog(program));
+
+    run();
+}
+
+
+var balls = new Map();
+var sourceCalls = new Map();
+var endpoints = new Map();
+
+function getNextSourceY() {
+    return 100 + 20 * sourceCalls.size;
+}
+
+function getNextEndpointY() {
+    return 100 + 19 * endpoints.size;
+}
+
+// add request from sourceCall to endpoint
+function addBall(sourceCall, endpoint) {
+    if(sourceCalls.get(sourceCall) == null) {
+        sourceCalls.set(sourceCall, {
+            balls:1,
+            x:0,
+            y:getNextSourceY()
+        });
+        wasChange = true;
+    } else {
+        var sc = sourceCalls.get(sourceCall);
+        sc.balls += 1;
+        sourceCalls.set(sourceCall, sc);
+    }
+    if(endpoints.get(endpoint) == null) {
+        endpoints.set(endpoint, {
+            balls:1,
+            x:width-100,
+            y:getNextEndpointY()
+        });
+        wasChange = true;
+    } else {
+        var ep = endpoints.get(endpoint);
+        ep.balls += 1;
+        endpoints.set(endpoint, ep);
+    }
+    var ball = {
+        x: 0,
+        y: sourceCalls.get(sourceCall).y,
+        dx: (width-100.0)/100.0,
+        dy: (endpoints.get(endpoint).y - sourceCalls.get(sourceCall).y)/100.0,
+        "endpoint": endpoint,
+        "sourceCall": sourceCall,
+        "delay": Math.floor(Math.random() * 40) * 200 
+    }
+    balls.set(Math.random(), ball);
+}
+
+// move everything
+function step() {
+    balls.forEach((v,k) => {
+        if(v.delay > 0) {
+            v.delay -= 10;
+            return;
+        }
+        if (v.x < 0) {
+            endpoints.get(v.endpoint).balls -= 1;
+            if(endpoints.get(v.endpoint).balls == 0) {
+                endpoints.delete(v.endpoint);
+                wasChange = true;
+            }
+            sourceCalls.get(v.sourceCall).balls -= 1;
+            if(sourceCalls.get(v.sourceCall).balls == 0) {
+                sourceCalls.delete(v.sourceCall);
+                wasChange = true;
+            }
+            balls.delete(k);
+        } else {
+            v.x += v.dx;
+            v.y += v.dy;
+            if (v.x > width-100) {
+                v.dx = -v.dx;
+            }
+        }
+    });
+    return wasChange;
+}
+
+function draw() {
+    
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    var vertices = ballsToCoords(balls);
+
+    vbuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+    itemSize = 2;
+    numItems = vertices.length / itemSize;
+
+    gl.useProgram(program);
+
+    program.uColor = gl.getUniformLocation(program, "uColor");
+    gl.uniform4fv(program.uColor, [0.0, 0.3, 0.0, 1.0]);
+
+    program.aVertexPosition = gl.getAttribLocation(program, "aVertexPosition");
+    gl.enableVertexAttribArray(program.aVertexPosition);
+    gl.vertexAttribPointer(program.aVertexPosition, itemSize, gl.FLOAT, false, 0, 0);
+
+    gl.drawArrays(gl.TRIANGLES, 0, numItems);
+}
+
+function reDrawText() {
+    if(wasChange) {
+        textCtx.clearRect(0,0,800,600);
+        sourceCalls.forEach((v,k) => {
+            textCtx.fillText(k, v.x, v.y);
+        });
+        endpoints.forEach((v, k) => {
+            textCtx.fillText(k, v.x, v.y);
+        });
+        wasChange = false;
+    }
+}
+
+function run() {
+    setInterval(() => {
+        step();
+        reDrawText();
+        draw();
+    }, 20);
+}
+
+function random() { 
+    for(var i = 0; i< 100; i++) {
+        var sourceCall = Math.floor(Math.random() * 20) + "SOURCE"
+        var endpoint = Math.floor(Math.random() * 10) + "EP"
+        addBall(sourceCall, endpoint);
+    }
+}
+
+</script>
+</head>
+<body onload="init()">
+<canvas id="mycanvas" width="800" height="500" style="position:absolute; top:0; left:0;"></canvas>
+<canvas id="textcanvas" width="800" height="500" style="position:absolute; top:0; left:0;"></canvas>
+</body>
+</html>
